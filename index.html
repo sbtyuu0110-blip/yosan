@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>1日予算</title>
+<!-- このページの存在理由は、Apps Script のページには付けられないホーム画面のアイコン。
+     アイコンを持ったこのページを間に挟み、中にアプリをそのまま表示する。
+     アプリのURLはここに書かない（このページは公開される）。各自のリンクの ?s= に入っている。 -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="1日予算">
+<meta name="application-name" content="1日予算">
+<meta name="theme-color" content="#f3f2ee">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<style>
+:root{--bg:#f3f2ee;--card:#fff;--ink:#1c1b19;--sub:#6b6963;--line:#e3e1db;--acc:#2a64d6;--bad:#c42f2a}
+@media (prefers-color-scheme:dark){:root{--bg:#131312;--card:#1d1c1b;--ink:#f1efea;--sub:#a5a39c;--line:#302f2c;--acc:#79a8ff;--bad:#ff6d66}}
+html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);overscroll-behavior:none;
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif}
+/* 全画面のとき、時計・電池とホームバーをよける。中のアプリは iframe なので env() が効かない＝こちらの仕事 */
+body{box-sizing:border-box;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);height:100vh;height:100dvh}
+iframe{display:block;width:100%;height:100%;border:0}
+[hidden]{display:none!important}
+.box{display:none;box-sizing:border-box;height:100%;padding:24px;align-items:center;justify-content:center}
+.box.on{display:flex}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px 20px;width:100%;max-width:340px;text-align:center}
+.card h1{margin:0 0 8px;font-size:19px}
+.card p{margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--sub)}
+.card input{box-sizing:border-box;width:100%;padding:12px;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+.card button,.card a{display:block;box-sizing:border-box;width:100%;margin-top:12px;padding:14px;font-size:16px;font-weight:700;color:#fff;background:var(--acc);border:0;border-radius:10px;text-decoration:none}
+.msg{margin-top:10px;min-height:20px;font-size:13.5px;color:var(--bad)}
+</style>
+</head>
+<body>
+<iframe id="app" title="1日予算" hidden></iframe>
+
+<!-- リンクの情報が無いとき（ふつうは出ない）。自分用のリンクを貼れば、この端末で覚える -->
+<div class="box" id="ask">
+  <div class="card">
+    <h1>1日予算</h1>
+    <p>LINEで届いた<b>自分用のリンク</b>を、まるごとここに貼ってください。<br>この端末で覚えるので、次からは聞きません。</p>
+    <input id="link" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…">
+    <button id="go" type="button">ひらく</button>
+    <div class="msg" id="msg"></div>
+  </div>
+</div>
+
+<!-- 中に表示できなかったときの逃げ道 -->
+<div class="box" id="esc">
+  <div class="card">
+    <h1>1日予算</h1>
+    <p>この画面の中では開けませんでした。下のボタンから開いてください。</p>
+    <a id="direct" href="#">アプリを開く</a>
+  </div>
+</div>
+
+<script>
+// 自分用のリンク … https://<ユーザー名>.github.io/<リポジトリ>/?s=<アプリの番号>&u=1（相手は u=2）
+// s = Apps Script のデプロイの番号（AKfycb…）。公開されるこのページには書かず、リンクの中にだけ持つ。
+// 一度開いたら、この端末（このページ自身の保存領域。iPhone でも消えにくい側）に覚えておく。
+var STORE = 'yosanLink';
+var SID = /^AKfyc[A-Za-z0-9_-]{20,}$/;
+function $(id) { return document.getElementById(id); }
+
+// URL か、貼られた文字から s と u を読む（自分用リンクでも、Apps Script のURLそのものでも可）
+function read(text) {
+  var s = '', u = '', m;
+  m = /[?&#]s=([A-Za-z0-9_-]+)/.exec(text); if (m) s = m[1];
+  if (!s) { m = /\/macros\/s\/([A-Za-z0-9_-]+)\/exec/.exec(text); if (m) s = m[1]; }
+  m = /[?&#]u=([12])(?![0-9])/.exec(text); if (m) u = m[1];
+  return SID.test(s) && u ? { s: s, u: u } : null;
+}
+function load() { try { return read(localStorage.getItem(STORE) || ''); } catch (e) { return null; } }
+function save(c) { try { localStorage.setItem(STORE, '?s=' + c.s + '&u=' + c.u); } catch (e) {} }
+function appUrl(c) { return 'https://script.google.com/macros/s/' + c.s + '/exec?u=' + c.u; }
+
+function open(c) {
+  save(c);
+  var f = $('app');
+  f.hidden = false;
+  f.src = appUrl(c);
+  $('direct').href = appUrl(c);
+  $('ask').className = 'box';
+  watch(c);
+}
+
+// 中に表示できたかの判定。load イベントは当てにならない（拒否されても発火する）ので、
+// 中のフレームの数（別ドメインでも読める）を見る。Apps Script が表示できていれば 1 以上。
+function watch(c) {
+  var until = Date.now() + 8000;
+  (function poll() {
+    var n = 0;
+    try { n = $('app').contentWindow.length; } catch (e) { n = 0; }
+    if (n > 0) return;
+    if (Date.now() < until) { setTimeout(poll, 400); return; }
+    $('app').hidden = true;
+    $('esc').className = 'box on';
+    location.replace(appUrl(c));   // ボタンを押さなくても直接ひらく。戻ってきたときのためにボタンも残す
+  })();
+}
+
+$('go').onclick = function () {
+  var c = read($('link').value.trim());
+  if (!c) { $('msg').textContent = 'リンクが読み取れませんでした。LINEのリンクをまるごと貼ってください'; return; }
+  open(c);
+};
+$('link').onkeydown = function (e) { if (e.key === 'Enter') $('go').onclick(); };
+
+(function start() {
+  if (/[?&]reset=1/.test(location.search)) { try { localStorage.removeItem(STORE); } catch (e) {} }
+  var c = read(location.search + location.hash) || load();
+  if (c) open(c);
+  else $('ask').className = 'box on';
+})();
+</script>
+</body>
+</html>
